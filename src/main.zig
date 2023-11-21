@@ -1,7 +1,6 @@
 const std = @import("std");
 const Vec2 = @Vector(2, f32);
 const Vec3 = @Vector(3, f32);
-pub inline fn vec(f: f32) Vec3 { return @splat(f); }
 
 pub const Color = struct {
     const black : Vec3 = [_]f32{0.0, 0.0, 0.0};
@@ -11,38 +10,43 @@ pub const Color = struct {
     const blue  : Vec3 = [_]f32{0.0, 0.0, 1.0};
 };
 
-const X = 0;
-const Y = 1;
-const Z = 2;
-
-const U = 0;
-const V = 1;
-
 const R = 0;
 const G = 1;
 const B = 2;
 
-const tile_height = 2000;
-const tile_width = 2000;
+const tile_height = 256;
+const tile_width = 256;
 
-const tiles_count_height = 4;
-const tiles_count_width = 4;
+//size in tiles
+const screen_height_tl = 30;
+const screen_width_tl  = 30;
 
-const screen_height = tile_height * tiles_count_height;
-const screen_width = tile_width * tiles_count_width;
+//size in pixels
+const screen_height_px = tile_height * screen_height_tl;
+const screen_width_px  = tile_width  * screen_width_tl;
 
-var screen: [screen_height * screen_width * 3]u8 = undefined;
+//size in bytes
+const screen_height_bt = screen_height_px * 3; 
+const screen_width_bt  = screen_width_px  * 3;
+
+var screen: [screen_height_bt * screen_width_bt * 3]u8 = undefined;
+
+//the generated wang tiles map
+var grid: [screen_height_tl * screen_width_tl]u4 = undefined;
 
 
 
 //triangle frag
 pub fn frag(pos: Vec2, mask: u4) Vec3 { //recive x, y -- returns rgb
-    //@setFloatMode(.Optimized);
+    @setFloatMode(.Optimized);
     const colors = [_]Vec3{
     (Color.red + Color.green),
     (Color.red) 
     };
 
+    //mask
+    //0b0011 -- top left
+    //0b1100 -- bot right
     const centers: [4]Vec2 = [_]Vec2 {
     [_]f32{0.0,0.5}, //left
     [_]f32{0.5,0.0}, //top
@@ -50,7 +54,7 @@ pub fn frag(pos: Vec2, mask: u4) Vec3 { //recive x, y -- returns rgb
     [_]f32{0.5,1.0}  //botton
     };
 
-    const d = 0.5;
+    const d = 0.4;
     const d_diff = 0.5 / d;
     const sides_dist: [2]Vec2 = [_]Vec2 {
     [_]f32{d, d*d_diff}, //horizontal increase Y
@@ -72,16 +76,49 @@ pub fn frag(pos: Vec2, mask: u4) Vec3 { //recive x, y -- returns rgb
         //painting if in range
         if (n_dist < 1){
             const sin = 1 - (@sin(n_dist * (std.math.pi / 2.0)));
-            const gradient = vec(sin);
+            //const sin = 1 - (@sin(n_dist * (1.0 / 2.0) / @sin(1 * (1.0 / 2.0))));
+            const gradient: Vec3 = @splat(sin);
             return colors[m] * gradient;
         }
     }
     return Color.black; 
-    //return Color.white * vec(0.8);
 
 }
 
-pub fn drawFile(file_path: []const u8) !void{
+pub fn generateRandTile(values_mask: u4, pos_mask :u4) u4{
+    //TODO: implement proper rand 
+    const rand_num = @as(u4, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
+
+    //0b1100 -- bot right
+    //0b0011 -- top left
+    return (rand_num & (~(pos_mask >> 2))) | ((values_mask >> 2));
+}
+pub fn generateGrid() void {
+    //0b1100 -- bot right
+    //0b0011 -- top left
+    for (&grid, 0..) |*mask,i| {
+        mask.* = switch(i) {
+            0 => generateRandTile(0,0),
+
+            1...screen_width_tl - 1 => generateRandTile(grid[i-1] & 0b0100, 0b0100),
+
+            else => blk: {
+
+                const y = (i / screen_width_tl);
+                const raw_y = (y * screen_width_tl);
+                const x = i - raw_y;
+
+                break: blk if (i % screen_width_tl == 0)
+                    generateRandTile(grid[raw_y - screen_width_tl + x] & 0b1000 , 0b1000)
+                else 
+                    generateRandTile((grid[raw_y - screen_width_tl + x] & 0b1000) | (grid[raw_y + x - 1] & 0b0100), 0b1100);
+               
+            },
+        };
+    }
+
+}
+pub fn drawImageToFile(file_path: []const u8) !void{
     const file = try std.fs.cwd().createFile(file_path, .{});
     defer file.close();
 
@@ -89,15 +126,13 @@ pub fn drawFile(file_path: []const u8) !void{
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
 
     // writting the P6 header
-    const bitmap_file_header = try std.fmt.allocPrint(fba.allocator(), "P6\n{d} {d}\n255\n", .{screen_height, screen_width});
+    const bitmap_file_header = try std.fmt.allocPrint(fba.allocator(), "P6\n{d} {d}\n255\n", .{screen_height_px, screen_width_px});
     _ = try file.write(bitmap_file_header);
-
-    // writing white color
 
     var cursor: usize = 0;
 
-    for(0..screen_height) |row| {
-        for(0..screen_width) |col| {
+    for(0..screen_height_px) |row| {
+         for(0..screen_width_px) |col| {
             // normalizing from 0.0 to 1.0
             const y = row % tile_height;
             const x = col % tile_width;
@@ -105,7 +140,10 @@ pub fn drawFile(file_path: []const u8) !void{
             const yf = @as(f32, @floatFromInt(y)) / tile_height;
 
             // getting to the fake fragment shader
-            var rgb = frag(.{xf,yf}, @as(u4, @truncate((row / tile_height) * tiles_count_width  + col / tile_width)));
+            const pos = ((row / tile_height) * screen_width_tl  + col / tile_width);
+            //std.debug.print("{d} \n", .{grid[pos]});
+
+            var rgb = frag(.{xf,yf}, grid[pos]);
 
             // mapping it back the color definition
             rgb *= @splat(255);
@@ -120,10 +158,13 @@ pub fn drawFile(file_path: []const u8) !void{
     _= try file.write(&screen);
 }
 pub fn main() !void {
-    var buf = [_]u8{'0', '.', 'p', 'p', 'm'};
+    var file_name = "output.ppm";
     std.debug.print("stating...\n", .{});
 
-    try drawFile(&buf);
+    generateGrid();
+
+    try drawImageToFile(&file_name);
+
     std.debug.print("end...\n", .{});
 
 }
