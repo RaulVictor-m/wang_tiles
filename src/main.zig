@@ -14,32 +14,26 @@ const R = 0;
 const G = 1;
 const B = 2;
 
-const tile_height = 100;
-const tile_width  = 100;
+const tile_height = 200;
+const tile_width  = 200;
 
 //size in tiles
-const screen_height_tl = 50;
-const screen_width_tl  = 50;
+const screen_height_tl = 4;
+const screen_width_tl  = 4;
 
-//size in pixels
+// //size in pixels
 const screen_height_px = tile_height * screen_height_tl;
 const screen_width_px  = tile_width  * screen_width_tl;
 
-//size in bytes
-const screen_height_bt = screen_height_px * 3; 
-const screen_width_bt  = screen_width_px  * 3;
-
-var screen: [screen_height_bt * screen_width_bt]u8 = undefined;
-
 //the generated wang tiles map
-var grid: [screen_height_tl * screen_width_tl]u4 = undefined;
+var grid: [screen_height_tl][screen_width_tl]u4 = undefined;
 
+var screen: [screen_height_px][screen_width_px][3]u8 = undefined;
+var screen_slice: []u8 = @as([*]u8, @ptrCast(&screen))[0..@sizeOf(@TypeOf(screen))];
 
 
 //triangle frag
-pub fn frag(pos: Vec2, mask: u4) Vec3 { //recive x, y -- returns rgb
-    //@setFloatMode(.Optimized);
-
+pub fn frag(pos: Vec2, color_mask: u4) Vec3 { //recive x, y -- returns rgb
     //puts black square in the middle
     // const mid_dist = @fabs(pos - @as(Vec2, @splat(0.5)));
     // if(mid_dist[0] < 0.3 and mid_dist[1] < 0.3) return Color.black;
@@ -59,7 +53,7 @@ pub fn frag(pos: Vec2, mask: u4) Vec3 { //recive x, y -- returns rgb
     [_]f32{0.5,1.0}  //botton
     };
 
-    const d = 0.5;
+    const d = 0.45;
     const d_diff = 0.5 / d;
     const sides_dist: [2]Vec2 = [_]Vec2 {
     [_]f32{d, d*d_diff}, //horizontal increase Y
@@ -67,7 +61,7 @@ pub fn frag(pos: Vec2, mask: u4) Vec3 { //recive x, y -- returns rgb
     };
 
     inline for (centers, 0..) |c,i| {
-        const m = (mask >> i) & 1;
+        const m = (color_mask >> i) & 1;
         var p = pos;
         p -= c;
         p = @fabs(p);
@@ -106,7 +100,6 @@ var randomizer: std.rand.DefaultPrng = undefined;
 pub fn generateRandTile(values_mask: u4, pos_mask :u4) u4{
 
     const rand_num = randomizer.random().int(u4);//@as(u4, @truncate(@as(u128, std.time.nanoTimestamp()))); //time
-
     //0b1100 -- bot right
     //0b0011 -- top left
     return (rand_num & (~(pos_mask >> 2))) | ((values_mask >> 2));
@@ -116,29 +109,27 @@ pub fn generateGrid() void {
 
     //0b1100 -- bot right
     //0b0011 -- top left
-    for (&grid, 0..) |*mask,i| {
-        mask.* = switch(i) {
-            0 => generateRandTile(0,0),
-
-            1...screen_width_tl - 1 => generateRandTile(grid[i-1] & 0b0100, 0b0100),
-
-            else => blk: {
-
-                const y = (i / screen_width_tl);
-                const raw_y = (y * screen_width_tl);
-                const x = i - raw_y;
-
-                break: blk if (i % screen_width_tl == 0)
-                    generateRandTile(grid[raw_y - screen_width_tl + x] & 0b1000 ,
-                                                                         0b1000)
-                else 
-                    generateRandTile((grid[raw_y - screen_width_tl + x] & 0b1000) |
-                                          (grid[raw_y + x - 1] & 0b0100), 0b1100);
-               
-            },
-        };
+    for (&grid, 0..) |*row,y| {
+        for (row, 0..) |*mask,x| {
+            if(y == 0) {
+                if(x == 0) {
+                    mask.* = generateRandTile(0,0);
+                }
+                else {
+                    mask.* = generateRandTile(grid[0][x-1] & 0b0100, 0b0100);
+                }
+                continue;
+            }
+            if(x == 0) {
+                mask.* = generateRandTile(grid[y-1][0] & 0b1000, 0b1000);
+            }
+            else {
+                mask.* = generateRandTile((grid[y-1][x] & 0b1000) | (grid[y][x-1] & 0b0100), 0b1100);
+            }
+        }
     }
 
+   
 }
 pub fn drawImageToFile(file_path: []const u8) !void{
     const file = try std.fs.cwd().createFile(file_path, .{});
@@ -155,31 +146,26 @@ pub fn drawImageToFile(file_path: []const u8) !void{
                                                      });
     _ = try file.write(bitmap_file_header);
 
-    var cursor: usize = 0;
+    for(&screen, 0..) |*row, s_y| {
+        for(&row.*, 0..) |*col, s_x| {
+            const tl_x = s_x / tile_width;
+            const tl_y = s_y / tile_height;
 
-    for(0..screen_height_px) |row| {
-         for(0..screen_width_px) |col| {
-            // normalizing from 0.0 to 1.0
-            const y = row % tile_height;
-            const x = col % tile_width;
-            const xf = @as(f32, @floatFromInt(x)) / tile_width;
-            const yf = @as(f32, @floatFromInt(y)) / tile_height;
+            const px_x = s_x % tile_width;
+            const px_y = s_y % tile_height;
 
-            // getting to the fake fragment shader
-            const pos = (((row/tile_height) * screen_width_tl) + (col/tile_width));
-            var rgb = frag(.{xf,yf}, grid[pos]);
+            const x: f32 = @as(f32, @floatFromInt(px_x))/tile_width;
+            const y: f32 = @as(f32, @floatFromInt(px_y))/tile_height;
 
-            // mapping it back the color definition
+            var rgb = frag(.{x, y}, grid[tl_y][tl_x]);
+
             rgb *= @splat(255);
-            screen[cursor] = @intFromFloat(rgb[R]);
-            cursor += 1;
-            screen[cursor] = @intFromFloat(rgb[G]);
-            cursor += 1;
-            screen[cursor] = @intFromFloat(rgb[B]);
-            cursor += 1;
+            col[R] = @intFromFloat(rgb[R]);
+            col[G] = @intFromFloat(rgb[G]);
+            col[B] = @intFromFloat(rgb[B]);
         }
     }
-    _= try file.write(&screen);
+    _= try file.write(screen_slice);
 }
 pub fn main() !void {
     var file_name = "output.ppm";
