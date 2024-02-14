@@ -16,7 +16,7 @@ There is nothing fancy built in to this, so if you want to see what it does you 
 $ zig build run
 ```
 
-With this you will see a output.ppm file with you result.
+With this you will see a output.ppm file with your result.
 
 if you need any help on the options or optimizations just use zig build help menu:
 
