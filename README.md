@@ -10,7 +10,17 @@ The main objective of this repo is exploring the use of zigs builtin Vector and 
 
 ## Usage 
 
-There is nothing fancy built in to this, so if you want to see what it does you just need to compile with default zig build command and run the executable. You will see an output.ppm file which contains the result.
-There are some commented chunks of code that change a little the rendering of the tiles, you may want to check it out. Have fun!!
+There is nothing fancy built in to this, so if you want to see what it does you just need to compile with default zig build:
 
+```console
+$ zig build run
+```
+
+With this you will see a output.ppm file with you result.
+
+if you need any help on the options or optimizations just use zig build help menu:
+
+```console
+$ zig build --help
+```
 
